@@ -1,12 +1,18 @@
 const express = require('express');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config()
 const app = express();
 const port = process.env.PORT || 5000;
 
 // middleware
-app.use(cors());
+app.use(cors({
+    origin: ['http://localhost:5173'],
+    credentials: true
+}));
+app.use(cookieParser());    
 app.use(express.json());
 
 
@@ -22,6 +28,31 @@ const client = new MongoClient(uri, {
   }
 });
 
+// created middleware
+const logger = async( req, res, next) => {
+    console.log('called', req.host, req.originalUrl)
+    next();
+}
+
+const verifyToken = async(req, res, next) =>{
+    const token = req.cookies?.token;
+    console.log('value of token in middleware', token)
+    if(!token){
+        return res.status(401).send({message: 'forbidden'})
+    }
+    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) =>{
+        // err
+        if(err){
+            return res.status(401).send({message: 'unauthorized'})
+        }
+        // token is valid then will be decoded
+        console.log('value in the token', decoded)
+        req.user = decoded;
+        next()
+    })
+  
+}
+
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
@@ -29,8 +60,22 @@ async function run() {
 
     const serviceCollection = client.db('carDoctorHos').collection('services');
     const bookingCollection = client.db('carDoctorHos').collection('booking');
+    // auth related api
+    app.post('/jwt', async(req, res) => {
+        const user = req.body;
+        console.log(user);
+        const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {expiresIn: '1h'})
 
-    app.get('/services', async(req, res) => {
+        res
+        .cookie('token', token, {
+            httpOnly: true,
+            secure: false,
+        })
+        .send({success: true});
+    }) 
+
+    //  services data api
+    app.get('/services', logger, async(req, res) => {
         const cursor = serviceCollection.find();
         const result = await cursor.toArray();
         res.send(result);
@@ -49,8 +94,10 @@ async function run() {
 
     // booking
 
-    app.get('/booking', async(req, res) => {
+    app.get('/booking', logger, verifyToken, async(req, res) => {
         console.log(req.query.email);
+        // console.log('tok tok tok', req.cookies.token)
+        console.log('user from valid token', req.user)  
         let query = {};
         if (req.query?.email){
             query = {email: req.query.email}
